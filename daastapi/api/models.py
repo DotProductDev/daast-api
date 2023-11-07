@@ -5,8 +5,10 @@ class Document(models.Model):
     A document indexed by this API.
     """
     label = models.CharField(max_length=255, null=False, db_index=True)
-    originalURI = models.CharField(max_length=1024, null=False)
     revisionNo = models.IntegerField(null=True)
+    # The etag is used to ensure that browsers can properly cache our generated
+    # manifests.
+    etag = models.CharField(max_length=32)
 
 class DocumentRevision(models.Model):
     """
@@ -16,17 +18,18 @@ class DocumentRevision(models.Model):
         """
         The publication status of the document revision.
         """
-        DRAFT = 0
-        CONTRIBUTION = 15
-        REJECTED = 99
-        PUBLISHED = 200
+        DRAFT = 0 # Still being worked on.
+        CONTRIBUTION = 15 # Waiting for editorial decision.
+        REJECTED = 99 # This revision should not be published.
+        APPROVED = 100 # This revision should be published.
+        PUBLISHED = 200 # A manifest was generated for this revision.
 
     document = models.ForeignKey(Document, null=False, on_delete=models.CASCADE)
     status = models.IntegerField(choices=Status.choices, db_index=True)
     revisionNo = models.IntegerField(null=True)
     timestamp = models.DateField(db_index=True)
+    # Document/pages metadata used to build an IIIF manifest.
     content = models.JSONField(null=False)
-    digest = models.CharField(max_length=128)
 
 class DocumentLinkMode(models.Model):
     """
@@ -34,6 +37,20 @@ class DocumentLinkMode(models.Model):
     Voyages/people in the Atlantic Slave Trade.
     """
     label = models.CharField(max_length=64, null=False)
+
+class Transcription(models.Model):
+    """
+    The text transcription of a page in a document.
+    """
+    document_rev = models.ForeignKey(DocumentRevision, null=False, on_delete=models.CASCADE)
+    page_number = models.IntegerField(null=False)
+    # A BCP47 language code for the transcription text.
+    # https://www.rfc-editor.org/bcp/bcp47.txt
+    language_code = models.CharField(max_length=20, null=False)
+    text = models.TextField(null=False)
+    # Indicates whether the transcription is in the original language or a
+    # translation.
+    is_translation = models.BooleanField(null=False)
 
 class EntityDocument(models.Model):
     """
