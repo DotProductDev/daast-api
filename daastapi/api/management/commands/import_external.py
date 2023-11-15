@@ -1,6 +1,9 @@
+import datetime
 from django.core.management.base import BaseCommand
-# from api.models import Document, DocumentRevision
+from django.db import transaction
+from api.models import Document, DocumentRevision, EntityDocument, EntityType, Transcription
 from xml.etree import ElementTree
+import json
 import re
 import requests
 
@@ -122,6 +125,11 @@ _dublin_core_labels = {
 }
 
 _max_errors = 5 # Maximum number of *consecutive* errors for the APIs we call.
+_voyages_cache_filename = '.cached_voyages_data'
+_zotero_cache_filename = '.cached_zotero_data'
+
+def _makeLabelValue(label, value, lang):
+    return { 'label': { lang: label }, 'value': { lang: value } }
 
 class Command(BaseCommand):
     help = """This command fetches data from multiple APIs and consolidates
@@ -134,9 +142,20 @@ class Command(BaseCommand):
         parser.add_argument("--zotero-url", default="https://api.zotero.org")
         parser.add_argument("--zotero-groupname", default="sv-docs")
         parser.add_argument("--zotero-userid")
+        parser.add_argument("--ignore-cache")
 
     @staticmethod
-    def get_zotero_data(options, group_id):
+    def _get_zotero_data(options, group_id):
+        # Check if we already have cached data from the Zotero API.
+        if not options.get('--ignore-cache', False):
+            try:
+                with open(_zotero_cache_filename, encoding='utf-8') as f:
+                    cached = json.load(f)
+                    print(f"Imported {len(cached.keys())} Zotero entries from cached file")
+                    return cached
+            except:
+                print("No cached Zotero data")
+
         def extract_from_rdf(rdf):
             # Map all the entries first and later keep only those that have a
             # Dublin Core label, and for those we use that label for the key
@@ -186,36 +205,65 @@ class Command(BaseCommand):
             except Exception as e:
                 last_error = e
                 error_count += 1
+        # Save to a local cache
+        try:
+            with open(_zotero_cache_filename, 'w', encoding='utf-8') as f:
+                json.dump(zotero_data, f)
+        except:
+            print("Failed to write Zotero data to the cache")
         return zotero_data
     
-    @staticmethod 
-    def get_voyages_data(options):
-        voyages_data = []
+    @staticmethod
+    def _get_voyages_data(options):
+        # Check if we already have cached data from the Zotero API.
+        if not options.get('--ignore-cache', False):
+            try:
+                with open(_voyages_cache_filename, encoding='utf-8') as f:
+                    cached = json.load(f)
+                    print(f"Imported {len(cached.keys())} Voyage entries from cached file")
+                    return cached
+            except:
+                print("No cached Voyage data")
+        voyages_data = {}
         sv_headers = { "Authorization": f"Token {options['voyages_key']}" }
-        idx_page = 1
+        offset = 0
         error_count = 0
         last_error = None
         while True:
             if error_count >= _max_errors:
                 raise Exception(f"Too many failures fetching data from the Voyages API: {last_error}")
             try:
-                res = requests.post(
-                    f"{options['voyages_url']}/docs/",
+                res = requests.get(
+                    f"{options['voyages_url']}/docs/GENERIC/?limit=10&offset={offset}",
                     headers=sv_headers,
-                    json={ "results_page": idx_page, "results_per_page": 10, "files": [] },
                     timeout=60)
-                page = res.json()
+                page = res.json()['results']
                 if not page:
                     break
-                voyages_data += page
+                voyages_data.update({ item['zotero_item_id']: item for item in page })
                 print(f"Fetched {len(page)} rows [first id={page[0]['id']}]")
                 error_count = 0
-                idx_page += 1
-            except Exception as e:
-                last_error = e
+                offset += len(page)
+            except Exception as ex:
+                last_error = ex
                 error_count += 1
                 continue
+        # Save to a local cache
+        try:
+            with open(_voyages_cache_filename, 'w', encoding='utf-8') as f:
+                json.dump(voyages_data, f)
+        except:
+            print("Failed to write Voyages data to the cache")
         return voyages_data
+    
+    @staticmethod
+    def _map_connections(doc, etype, connections, field_name):
+        for item in connections:
+            if item.get(field_name):
+                entity_key = item[field_name].get('id')
+                if entity_key:
+                    edoc = EntityDocument(document=doc, entity_type=etype, entity_key=entity_key)
+                    edoc.save()
     
     def handle(self, *args, **options):
         zotero_groups_url = f"{options['zotero_url']}/users/{options['zotero_userid']}/groups"
@@ -224,7 +272,49 @@ class Command(BaseCommand):
         match = next(item for item in res.json() if item['data']['name'] == options['zotero_groupname'])
         group_id = match['id']
         print(f"Zotero group id is {group_id}")
-
-        # zotero_data = Command.get_zotero_data(options, group_id)
-        voyages_data = Command.get_voyages_data(options)
-        print(f"{len(voyages_data)}")
+        zotero_data = Command._get_zotero_data(options, group_id)
+        voyages_data = Command._get_voyages_data(options)
+        docs = {d.key: d for d in Document.objects.prefetch_related('revisions').all()}
+        entity_types = {t.name: t for t in EntityType.objects.all()}
+        with transaction.atomic():
+            for key, voyage_data in voyages_data.items():
+                pages = [p['page'] for p in voyage_data['page_connections']]
+                rdf = zotero_data.get(key)
+                if not rdf or not pages:
+                    continue
+                # At this point we have enough data to import to our db.
+                doc = docs.get(key)
+                if doc is None:
+                    doc = Document()
+                    doc.key = key
+                    doc.save()
+                # TODO: check whether there is already an identical revision and
+                # prevent the creation of a duplicate.
+                rev = DocumentRevision(
+                    document=doc, label=rdf.get('Title', 'No title'),
+                    status=DocumentRevision.Status.IMPORTED,
+                    timestamp=datetime.datetime.now())
+                rev.revision_number = 1
+                # Generate metadata for the document.
+                metadata = [_makeLabelValue(key, [val], 'en') for key, val in rdf.items()]
+                metadata.append(_makeLabelValue('Citation', [f"<span><a href='https://api.zotero.org/groups/{group_id}/items/{key}'>Zotero Entry</a></span>"], 'en'))
+                rev.content = {
+                    'metadata': metadata,
+                    'page_images': [p.get('iiif_baseimage_url', '') for p in pages]
+                }
+                rev.save()
+                # Create entity links to the document.
+                Command._map_connections(doc, entity_types['Voyages'], voyage_data.get('source_voyage_connections'), 'voyage')
+                Command._map_connections(doc, entity_types['Enslaved'], voyage_data.get('source_enslaved_connections'), 'enslaved')
+                Command._map_connections(doc, entity_types['Enslavers'], voyage_data.get('source_enslaver_connections'), 'enslaver')
+                # Import transcript data.
+                for i, page in enumerate(pages, 1):
+                    page_transc = page.get('transcription')
+                    if page_transc:
+                        # TODO: for now there is no language code in the source API
+                        transcription = Transcription(
+                            document_rev=rev, page_number=i,
+                            language_code='en', text=page_transc,
+                            is_translation=False)
+                        transcription.save()
+        print("Import finished")

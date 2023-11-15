@@ -4,11 +4,8 @@ class Document(models.Model):
     """
     A document indexed by this API.
     """
-    label = models.CharField(max_length=255, null=False, db_index=True)
-    revisionNo = models.IntegerField(null=True)
-    # The etag is used to ensure that browsers can properly cache our generated
-    # manifests.
-    etag = models.CharField(max_length=32)
+    key = models.CharField(max_length=128, unique=True)
+    current_rev = models.IntegerField(null=True)
 
 class DocumentRevision(models.Model):
     """
@@ -19,24 +16,25 @@ class DocumentRevision(models.Model):
         The publication status of the document revision.
         """
         DRAFT = 0 # Still being worked on.
+        IMPORTED = 10 # The document revision was automatically imported by a management command
         CONTRIBUTION = 15 # Waiting for editorial decision.
         REJECTED = 99 # This revision should not be published.
         APPROVED = 100 # This revision should be published.
         PUBLISHED = 200 # A manifest was generated for this revision.
 
-    document = models.ForeignKey(Document, null=False, on_delete=models.CASCADE)
+    document = models.ForeignKey(Document,
+        null=False, on_delete=models.CASCADE, related_name='revisions')
+    label = models.CharField(max_length=255, null=False, db_index=True)
     status = models.IntegerField(choices=Status.choices, db_index=True)
-    revisionNo = models.IntegerField(null=True)
+    revision_number = models.IntegerField(null=True)
     timestamp = models.DateField(db_index=True)
     # Document/pages metadata used to build an IIIF manifest.
     content = models.JSONField(null=False)
-
-class DocumentLinkMode(models.Model):
-    """
-    A custom enumeration that describes how documents can be linked to
-    Voyages/people in the Atlantic Slave Trade.
-    """
-    label = models.CharField(max_length=64, null=False)
+    
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['document', 'revision_number'], name='unique_doc_rev_number')
+        ]
 
 class Transcription(models.Model):
     """
@@ -52,31 +50,19 @@ class Transcription(models.Model):
     # translation.
     is_translation = models.BooleanField(null=False)
 
+class EntityType(models.Model):
+    """
+    The type of entity that can be linked to a Document.
+    """
+    name = models.CharField(max_length=128, unique=True)
+    url_format = models.CharField(max_length=256,
+        help_text='The format of the url with a placeholder for the entity key')
+
 class EntityDocument(models.Model):
     """
-    Represents a connection between an Entity (abstract) and a Document.
+    Represents a connection between an Entity and a Document.
     """
-    link_mode = models.ForeignKey(DocumentLinkMode, null=False, on_delete=models.RESTRICT)
     document = models.ForeignKey(Document, null=False, on_delete=models.RESTRICT)
     notes = models.CharField(max_length=255, null=True)
-
-    class Meta:
-        abstract = True
-
-class EnslavedDocument(EntityDocument):
-    """
-    Connects enslaved and documents.
-    """
-    enslaved_id = models.IntegerField(null=False, db_index=True)
-
-class EnslaverDocument(EntityDocument):
-    """
-    Connects enslavers and documents.
-    """
-    enslaver_id = models.IntegerField(null=False, db_index=True)
-
-class VoyageDocument(EntityDocument):
-    """
-    Connects voyages and documents.
-    """
-    voyage_id = models.IntegerField(null=False, db_index=True)
+    entity_type = models.ForeignKey(EntityType, null=False, on_delete=models.RESTRICT)
+    entity_key = models.CharField(max_length=255, null=False, db_index=True)
