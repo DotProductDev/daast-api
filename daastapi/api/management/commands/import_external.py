@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from api.models import Document, DocumentRevision, EntityDocument, EntityType, Transcription
@@ -129,7 +129,7 @@ _voyages_cache_filename = '.cached_voyages_data'
 _zotero_cache_filename = '.cached_zotero_data'
 
 def _makeLabelValue(label, value, lang):
-    return { 'label': { lang: label }, 'value': { lang: value } }
+    return { 'label': { lang: [label] }, 'value': { lang: value } }
 
 class Command(BaseCommand):
     help = """This command fetches data from multiple APIs and consolidates
@@ -258,12 +258,24 @@ class Command(BaseCommand):
     
     @staticmethod
     def _map_connections(doc, etype, connections, field_name):
+        conn = set()
         for item in connections:
             if item.get(field_name):
                 entity_key = item[field_name].get('id')
                 if entity_key:
-                    edoc = EntityDocument(document=doc, entity_type=etype, entity_key=entity_key)
-                    edoc.save()
+                    conn.add(entity_key)
+        for ekey in conn:
+            edoc = EntityDocument(document=doc, entity_type=etype, entity_key=ekey)
+            edoc.save()
+
+    @staticmethod
+    def _extract_iiif_url(url):
+        if url is None or url == '':
+            return None
+        m = re.match('^(https?://)([^/]+)(.*)/full/(full|max)/0/default.jpg$', url)
+        if not m:
+            raise Exception(f"Bad format for IIIF url: '{url}'")
+        return [m.group(i) for i in [2, 3]]
     
     def handle(self, *args, **options):
         zotero_groups_url = f"{options['zotero_url']}/users/{options['zotero_userid']}/groups"
@@ -276,12 +288,17 @@ class Command(BaseCommand):
         voyages_data = Command._get_voyages_data(options)
         docs = {d.key: d for d in Document.objects.prefetch_related('revisions').all()}
         entity_types = {t.name: t for t in EntityType.objects.all()}
+        timestamp_format = "%Y-%m-%dT%H:%M:%S.%fZ"
+        imported_count = 0
         with transaction.atomic():
             for key, voyage_data in voyages_data.items():
                 pages = [p['page'] for p in voyage_data['page_connections']]
                 rdf = zotero_data.get(key)
-                if not rdf or not pages:
+                if not rdf:
                     continue
+                page_images = [pimg for pimg in
+                    [Command._extract_iiif_url(p.get('iiif_baseimage_url')) for p in pages]
+                    if pimg is not None]
                 # At this point we have enough data to import to our db.
                 doc = docs.get(key)
                 if doc is None:
@@ -290,17 +307,21 @@ class Command(BaseCommand):
                     doc.save()
                 # TODO: check whether there is already an identical revision and
                 # prevent the creation of a duplicate.
+                try:
+                    timestamp = datetime.strptime(voyage_data['last_updated'], timestamp_format)
+                except:
+                    timestamp = datetime.now()
                 rev = DocumentRevision(
                     document=doc, label=rdf.get('Title', 'No title'),
                     status=DocumentRevision.Status.IMPORTED,
-                    timestamp=datetime.datetime.now())
+                    timestamp=timestamp)
                 rev.revision_number = 1
                 # Generate metadata for the document.
                 metadata = [_makeLabelValue(key, [val], 'en') for key, val in rdf.items()]
                 metadata.append(_makeLabelValue('Citation', [f"<span><a href='https://api.zotero.org/groups/{group_id}/items/{key}'>Zotero Entry</a></span>"], 'en'))
                 rev.content = {
                     'metadata': metadata,
-                    'page_images': [p.get('iiif_baseimage_url', '') for p in pages]
+                    'page_images': page_images
                 }
                 rev.save()
                 # Create entity links to the document.
@@ -317,4 +338,7 @@ class Command(BaseCommand):
                             language_code='en', text=page_transc,
                             is_translation=False)
                         transcription.save()
+                imported_count += 1
+                if imported_count % 100 == 0:
+                    print(f"Imported {imported_count} documents")
         print("Import finished")

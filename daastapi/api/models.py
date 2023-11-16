@@ -23,6 +23,7 @@ class DocumentRevision(models.Model):
         REJECTED = 99 # This revision should not be published.
         APPROVED = 100 # This revision should be published.
         PUBLISHED = 200 # A manifest was generated for this revision.
+        NO_IMAGES = 500 # An IIIF manifest cannot be generated because there are no images associated with it
 
     document = models.ForeignKey(Document,
         null=False, on_delete=models.CASCADE, related_name='revisions')
@@ -45,7 +46,9 @@ class Transcription(models.Model):
     """
     The text transcription of a page in a document.
     """
-    document_rev = models.ForeignKey(DocumentRevision, null=False, on_delete=models.CASCADE)
+    document_rev = models.ForeignKey(
+        DocumentRevision, null=False,
+        on_delete=models.CASCADE, related_name='transcriptions')
     page_number = models.IntegerField(null=False)
     # A BCP47 language code for the transcription text.
     # https://www.rfc-editor.org/bcp/bcp47.txt
@@ -76,3 +79,9 @@ class EntityDocument(models.Model):
     notes = models.CharField(max_length=255, null=True)
     entity_type = models.ForeignKey(EntityType, null=False, on_delete=models.RESTRICT)
     entity_key = models.CharField(max_length=255, null=False, db_index=True)
+
+    
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['document', 'entity_type', 'entity_key'], name='unique_doc_entity_link')
+        ]
