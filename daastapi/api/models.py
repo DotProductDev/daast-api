@@ -6,6 +6,8 @@ class Document(models.Model):
     """
     key = models.CharField(max_length=128, unique=True)
     current_rev = models.IntegerField(null=True)
+    def __str__(self):
+        return self.key
 
 class DocumentRevision(models.Model):
     """
@@ -35,6 +37,9 @@ class DocumentRevision(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['document', 'revision_number'], name='unique_doc_rev_number')
         ]
+    
+    def __str__(self):
+        return self.label
 
 class Transcription(models.Model):
     """
@@ -49,6 +54,9 @@ class Transcription(models.Model):
     # Indicates whether the transcription is in the original language or a
     # translation.
     is_translation = models.BooleanField(null=False)
+    
+    def __str__(self):
+    	return self.text
 
 class EntityType(models.Model):
     """
@@ -57,7 +65,9 @@ class EntityType(models.Model):
     name = models.CharField(max_length=128, unique=True)
     url_format = models.CharField(max_length=256,
         help_text='The format of the url with a placeholder for the entity key')
-
+    def __str__(self):
+        return self.name
+    
 class EntityDocument(models.Model):
     """
     Represents a connection between an Entity and a Document.
