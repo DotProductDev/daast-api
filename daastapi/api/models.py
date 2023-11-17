@@ -2,6 +2,7 @@
 Document API models
 """
 
+import json
 from django.db import models
 
 class Document(models.Model):
@@ -93,3 +94,67 @@ class EntityDocument(models.Model):
             models.UniqueConstraint(fields=['document', 'entity_type', 'entity_key'],
                                     name='unique_doc_entity_link')
         ]
+
+class SearchOnEntity:
+    """
+    Search component that matches documents according to entities linked to it.
+    """
+
+    def __init__(self, typename: str, keys: list[str]):
+        self.typename = typename
+        self.keys = keys
+
+class SearchModel:
+    """
+    Represents a search of documents in the database
+    """
+
+    def __init__(self,
+                label: str | None = None,
+                entities: list[SearchOnEntity] | None = None,
+                results_page: int | None = None,
+                page_size: int | None = None):
+        self.label = label
+        self.entities = entities or []
+        self.results_page = results_page or 1
+        self.page_size = page_size or 25
+
+    @staticmethod
+    def from_json(json_value: str):
+        """
+        Parse a JSON string to a SearchModel
+        """
+        data = json.loads(json_value)
+        return SearchModel(
+            data.get('label'),
+            [SearchOnEntity(e['typename'], e['keys']) for e in data.get('entities', [])],
+            data.get('results_page'),
+            data.get('page_size'))
+
+class EntityCache:
+    """
+    A simple cache that organizes the entities associated with each document.
+    """
+
+    def __init__(self):
+        self._data = None
+
+    def get(self, doc_key: str):
+        """
+        Get cached data for the document with the given key.
+        """
+        if not self._data:
+            self.load()
+        return self._data.get(doc_key, {})
+
+    def load(self):
+        """
+        Load the cache
+        """
+        items = EntityDocument.objects.select_related('document', 'entity_type').all()
+        data = {}
+        for item in items:
+            doc_data: dict[str,list[str]] = data.setdefault(item.document.key, {})
+            by_type_data: list[str] = doc_data.setdefault(item.entity_type.name, [])
+            by_type_data.append(item.entity_key)
+        self._data = data

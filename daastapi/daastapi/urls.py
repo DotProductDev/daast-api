@@ -17,10 +17,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, re_path
 
-from api.views import manifest
+from api.views import manifest, search
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/search', search),
     re_path(r"api/manifest/(?P<key>[0-9A-Z]+)/(?P<rev_number_query>[0-9]+)", manifest),
     re_path(r"api/manifest/(?P<key>[0-9A-Z]+)", manifest),
 ]
