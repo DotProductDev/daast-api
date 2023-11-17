@@ -1,11 +1,15 @@
-from django.core.management.base import BaseCommand
-from django.db import transaction
-from api.models import DocumentRevision
+"""
+Management command for generating IIIF manifests
+"""
 
 import json
 import pathlib
 import re
 import requests
+
+from django.core.management.base import BaseCommand
+from django.db import transaction
+from api.models import DocumentRevision
 
 # We special case these sources as they have issues with their IIIF Image
 # Service preventing us from creating manifests that point directly to the image
@@ -27,25 +31,32 @@ def _get_api_and_profile(img_info):
     return (api_version, level_match.group(1) if level_match else None)
 
 class Command(BaseCommand):
+    """
+    IIIF manifest generation command
+    """
+
     help = """This command generate manifest files based on the documents
         marked for publication in the database"""
-    
+
     def add_arguments(self, parser):
         parser.add_argument("--base-url")
         parser.add_argument("--out-dir", type=pathlib.Path,
                             help="The output directory where the manifests should be placed")
         parser.add_argument("--status", nargs="*", type=int,
                             default=DocumentRevision.Status.APPROVED,
-                            help="Only generate manifests with these status codes. Default = PUBLISHED")
-    
+                            help="Only generate manifests with these status codes. " +
+                            "Default = PUBLISHED")
+
     def handle(self, *args, **options):
         revisions = DocumentRevision.objects \
             .select_related('document') \
             .prefetch_related('transcriptions') \
             .filter(status__in=[int(s) for s in options['status']])
+        revisions = list(revisions)
+        print(f"Found {len(revisions)} revisions to publish")
         generated_count = 0
-        with transaction.atomic():
-            for rev in revisions:
+        for rev in revisions:
+            with transaction.atomic():
                 page_images = rev.content['page_images']
                 if not page_images:
                     # Do not generate manifest without images.
@@ -70,7 +81,8 @@ class Command(BaseCommand):
                     (api_version, profile_level) = _get_api_and_profile(img_info)
                     use_img_service = not any(s in host_addr for s in _special_case_no_img_service)
                     if use_img_service and not (api_version and profile_level):
-                        print(f"Failed to find API version and level for image service: {rev.label} [{rev.document.key}]")
+                        print("Failed to find API version and level for image service: " +
+                              f"{rev.label} [{rev.document.key}]")
                         abort = True
                         break
                     thumb = [
@@ -85,10 +97,10 @@ class Command(BaseCommand):
                     w = int(img_info['width'])
                     h = int(img_info['height'])
                     max_dim = max(w, h)
-                    MAX_LEN = 1920
-                    if max_dim > MAX_LEN:
-                        w = int(round(w * MAX_LEN / max_dim))
-                        h = int(round(h * MAX_LEN / max_dim))
+                    max_len = 1920
+                    if max_dim > max_len:
+                        w = int(round(w * max_len / max_dim))
+                        h = int(round(h * max_len / max_dim))
                     img_size_urlparam = f"{w},{h}" if use_img_service else 'max'
                     canvas_body = {
                         "id": f"{img_url_base}/full/{img_size_urlparam}/0/default.jpg",

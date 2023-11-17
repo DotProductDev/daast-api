@@ -1,3 +1,7 @@
+"""
+Document API models
+"""
+
 from django.db import models
 
 class Document(models.Model):
@@ -6,8 +10,9 @@ class Document(models.Model):
     """
     key = models.CharField(max_length=128, unique=True)
     current_rev = models.IntegerField(null=True)
+
     def __str__(self):
-        return self.key
+        return f"Document {self.key}"
 
 class DocumentRevision(models.Model):
     """
@@ -23,7 +28,7 @@ class DocumentRevision(models.Model):
         REJECTED = 99 # This revision should not be published.
         APPROVED = 100 # This revision should be published.
         PUBLISHED = 200 # A manifest was generated for this revision.
-        NO_IMAGES = 500 # An IIIF manifest cannot be generated because there are no images associated with it
+        NO_IMAGES = 500 # An IIIF manifest cannot be generated as there are no images for it
 
     document = models.ForeignKey(Document,
         null=False, on_delete=models.CASCADE, related_name='revisions')
@@ -33,14 +38,16 @@ class DocumentRevision(models.Model):
     timestamp = models.DateField(db_index=True)
     # Document/pages metadata used to build an IIIF manifest.
     content = models.JSONField(null=False)
-    
+
     class Meta:
+        """Multi column uniqueness constraints"""
         constraints = [
-            models.UniqueConstraint(fields=['document', 'revision_number'], name='unique_doc_rev_number')
+            models.UniqueConstraint(fields=['document', 'revision_number'],
+                                    name='unique_doc_rev_number')
         ]
-    
+
     def __str__(self):
-        return self.label
+        return f"Document Revision {self.revision_number} ({self.label})"
 
 class Transcription(models.Model):
     """
@@ -57,9 +64,9 @@ class Transcription(models.Model):
     # Indicates whether the transcription is in the original language or a
     # translation.
     is_translation = models.BooleanField(null=False)
-    
+
     def __str__(self):
-    	return self.text
+        return f"Transcription p. {self.page_number}: {self.text}"
 
 class EntityType(models.Model):
     """
@@ -69,8 +76,8 @@ class EntityType(models.Model):
     url_format = models.CharField(max_length=256,
         help_text='The format of the url with a placeholder for the entity key')
     def __str__(self):
-        return self.name
-    
+        return f"Entity type: {self.name}"
+
 class EntityDocument(models.Model):
     """
     Represents a connection between an Entity and a Document.
@@ -80,8 +87,9 @@ class EntityDocument(models.Model):
     entity_type = models.ForeignKey(EntityType, null=False, on_delete=models.RESTRICT)
     entity_key = models.CharField(max_length=255, null=False, db_index=True)
 
-    
     class Meta:
+        """Multi column uniqueness constraints"""
         constraints = [
-            models.UniqueConstraint(fields=['document', 'entity_type', 'entity_key'], name='unique_doc_entity_link')
+            models.UniqueConstraint(fields=['document', 'entity_type', 'entity_key'],
+                                    name='unique_doc_entity_link')
         ]

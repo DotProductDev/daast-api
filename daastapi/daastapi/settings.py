@@ -25,8 +25,10 @@ SECRET_KEY = 'django-insecure-x(rlhfz9p#uywg21dw1%bth4^8m**xo&uucgx3zhnq^neyp@4z
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['daast.azurewebsites.net']
 
+# TODO: change this when moving to production
+MANIFEST_URL_BASE = 'https://dotproductstaging.z13.web.core.windows.net/manifests'
 
 # Application definition
 

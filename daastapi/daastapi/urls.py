@@ -15,8 +15,12 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, re_path
+
+from api.views import manifest
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    re_path(r"api/manifest/(?P<key>[0-9A-Z]+)/(?P<rev_number_query>[0-9]+)", manifest),
+    re_path(r"api/manifest/(?P<key>[0-9A-Z]+)", manifest),
 ]

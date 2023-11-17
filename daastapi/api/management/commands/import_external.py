@@ -161,11 +161,13 @@ class Command(BaseCommand):
             # Dublin Core label, and for those we use that label for the key
             # value instead of the original XML tag's name.
             complete = { re.match('^{.*}(.*)$', e.tag)[1]: e.text for e in rdf }
-            return { _dublin_core_labels[key]: val for key, val in complete.items() if key in _dublin_core_labels }
+            return { _dublin_core_labels[key]: val 
+                    for key, val in complete.items() if key in _dublin_core_labels }
 
         def zotero_page(start, limit=100):
             res = requests.get( \
-                f"{options['zotero_url']}/groups/{group_id}/items?start={start}&limit={limit}&content=rdf_dc", \
+                f"{options['zotero_url']}/groups/{group_id}/items?" + \
+                f"start={start}&limit={limit}&content=rdf_dc", \
                 headers={ 'Authorization': f"Bearer {options['zotero_key']}" }, \
                 timeout=60)
             page = ElementTree.fromstring(res.content)
