@@ -204,8 +204,8 @@ class Command(BaseCommand):
                 zotero_start += count
                 zotero_data.update(page)
                 error_count = 0
-            except Exception as e:
-                last_error = e
+            except Exception as ex:
+                last_error = ex
                 error_count += 1
         # Save to a local cache
         try:

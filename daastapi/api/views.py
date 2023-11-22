@@ -48,7 +48,8 @@ def search(request):
             .values_list('document_id')
         qs = qs.filter(document_id__in=Subquery(entity_query))
     qs = qs.order_by('document__key')
-    qs = qs.values('label', 'revision_number', key=F('document__key'))
+    qs = qs.values('label', 'revision_number',
+            key=F('document__key'), thumb=F('document__thumbnail'))
     paginator = Paginator(qs, sm.page_size)
     results = list(paginator.get_page(sm.results_page))
     for item in results:

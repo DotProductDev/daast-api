@@ -11,6 +11,7 @@ class Document(models.Model):
     """
     key = models.CharField(max_length=128, unique=True)
     current_rev = models.IntegerField(null=True)
+    thumbnail = models.TextField(null=True)
 
     def __str__(self):
         return f"Document {self.key}"

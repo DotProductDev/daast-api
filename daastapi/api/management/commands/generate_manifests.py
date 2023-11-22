@@ -175,6 +175,7 @@ class Command(BaseCommand):
                 rev.save()
                 doc = rev.document
                 doc.current_rev = rev.revision_number
+                doc.thumbnail = first_thumb[0]['id']
                 doc.save()
                 generated_count += 1
                 if generated_count % 50 == 0:
