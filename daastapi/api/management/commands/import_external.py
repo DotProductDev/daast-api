@@ -207,6 +207,30 @@ class Command(BaseCommand):
             except Exception as ex:
                 last_error = ex
                 error_count += 1
+        # Now get bib info from Zotero.
+        error_count = 0
+        zotero_start = 0
+        while True:
+            if error_count >= _max_errors:
+                raise Exception(f"Too many failures fetching data from the Zotero API: {last_error}")
+            try:
+                res = requests.get( \
+                    f"{options['zotero_url']}/groups/{group_id}/items?start={zotero_start}" + \
+                    "&limit=100&&format=json&include=bib&style=chicago-fullnote-bibliography", \
+                    headers={ 'Authorization': f"Bearer {options['zotero_key']}" }, \
+                    timeout=60)
+                page = res.json()
+                if not page:
+                    break
+                print(f"Fetched bibliography from Zotero's API [{len(page)}].")
+                for item in page:
+                    key = item['key']
+                    if key in zotero_data:
+                        zotero_data[key]['bib'] = item['bib']
+                zotero_start += len(page)
+            except Exception as ex:
+                last_error = ex
+                error_count += 1
         # Save to a local cache
         try:
             with open(_zotero_cache_filename, 'w', encoding='utf-8') as f:
@@ -306,13 +330,14 @@ class Command(BaseCommand):
                 if doc is None:
                     doc = Document()
                     doc.key = key
-                    doc.save()
                 # TODO: check whether there is already an identical revision and
                 # prevent the creation of a duplicate.
                 try:
                     timestamp = datetime.strptime(voyage_data['last_updated'], timestamp_format)
                 except:
                     timestamp = datetime.now()
+                doc.bib = rdf.pop('bib', None)
+                doc.save()
                 rev = DocumentRevision(
                     document=doc, label=rdf.get('Title', 'No title'),
                     status=DocumentRevision.Status.IMPORTED,

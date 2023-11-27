@@ -49,7 +49,9 @@ def search(request):
         qs = qs.filter(document_id__in=Subquery(entity_query))
     qs = qs.order_by('document__key')
     qs = qs.values('label', 'revision_number',
-            key=F('document__key'), thumb=F('document__thumbnail'))
+            key=F('document__key'),
+            thumb=F('document__thumbnail'),
+            bib=F('document__bib'))
     paginator = Paginator(qs, sm.page_size)
     results = list(paginator.get_page(sm.results_page))
     for item in results:

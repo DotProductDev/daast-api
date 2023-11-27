@@ -11,7 +11,8 @@ class Document(models.Model):
     """
     key = models.CharField(max_length=128, unique=True)
     current_rev = models.IntegerField(null=True)
-    thumbnail = models.TextField(null=True)
+    thumbnail = models.TextField(null=True, help_text='URL for a thumbnail of the Document')
+    bib = models.TextField(null=True, help_text='Formatted bibliography for the Document')
 
     def __str__(self):
         return f"Document {self.key}"
