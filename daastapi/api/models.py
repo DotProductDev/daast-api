@@ -76,6 +76,9 @@ class EntityType(models.Model):
     The type of entity that can be linked to a Document.
     """
     name = models.CharField(max_length=128, unique=True)
+    url_label = models.CharField(max_length=256,
+        help_text='The format of the url link label for entities of this " + \
+            "type with a placeholder for the key')
     url_format = models.CharField(max_length=256,
         help_text='The format of the url with a placeholder for the entity key')
     def __str__(self):
@@ -85,7 +88,8 @@ class EntityDocument(models.Model):
     """
     Represents a connection between an Entity and a Document.
     """
-    document = models.ForeignKey(Document, null=False, on_delete=models.RESTRICT)
+    document = models.ForeignKey(Document, null=False,
+        on_delete=models.RESTRICT, related_name='entities')
     notes = models.CharField(max_length=255, null=True)
     entity_type = models.ForeignKey(EntityType, null=False, on_delete=models.RESTRICT)
     entity_key = models.CharField(max_length=255, null=False, db_index=True)

@@ -9,7 +9,8 @@ import requests
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from api.models import DocumentRevision
+from django.db.models import Prefetch
+from api.models import DocumentRevision, EntityDocument
 
 # We special case these sources as they have issues with their IIIF Image
 # Service preventing us from creating manifests that point directly to the image
@@ -51,13 +52,16 @@ class Command(BaseCommand):
         revisions = DocumentRevision.objects \
             .select_related('document') \
             .prefetch_related('transcriptions') \
+            .prefetch_related( \
+                Prefetch('document__entities', EntityDocument.objects.prefetch_related('entity_type'))) \
             .filter(status__in=[int(s) for s in options['status']])
         revisions = list(revisions)
         print(f"Found {len(revisions)} revisions to publish")
         generated_count = 0
         for rev in revisions:
             with transaction.atomic():
-                page_images = rev.content['page_images']
+                content = rev.content
+                page_images = content['page_images']
                 if not page_images:
                     # Do not generate manifest without images.
                     rev.status = DocumentRevision.Status.NO_IMAGES
@@ -155,12 +159,29 @@ class Command(BaseCommand):
                     canvas.append(canvas_data)
                 if abort:
                     break
+                # Append entity connections to metadata.
+                doc_links = {}
+                for entity in rev.document.entities.all():
+                    et = entity.entity_type
+                    entity_links = doc_links.setdefault(et.name, [])
+                    link_url = et.url_format.format(key=entity.entity_key)
+                    link_label = et.url_label.format(key=entity.entity_key)
+                    entity_links.append(f"<span><a href='{link_url}'>{link_label}</a></span>")
+                # Make a copy of the metadata so as not to overwrite the
+                # revision's version.
+                metadata = list(content['metadata'])
+                for typename, entries in doc_links.items():
+                    link_item = {
+                        "label": { 'en': [f"Linked {typename}"] },
+                        "value": { 'en': entries }
+                    }
+                    metadata.append(link_item)
                 manifest = {
                     "@context": "http://iiif.io/api/presentation/3/context.json",
                     "id": base_id,
                     "type": "Manifest",
                     "label": { 'en': [rev.label] },
-                    "metadata": rev.content['metadata'],
+                    "metadata": metadata,
                     "viewingDirection": "left-to-right",
                     "behavior": ["paged"],
                     "navDate": str(rev.timestamp),

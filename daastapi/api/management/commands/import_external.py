@@ -140,12 +140,11 @@ class Command(BaseCommand):
         parser.add_argument("--voyages-url")
         parser.add_argument("--zotero-key")
         parser.add_argument("--zotero-url", default="https://api.zotero.org")
-        parser.add_argument("--zotero-groupname", default="sv-docs")
         parser.add_argument("--zotero-userid")
         parser.add_argument("--ignore-cache")
 
     @staticmethod
-    def _get_zotero_data(options, group_id):
+    def _get_zotero_data(options, group_ids: list[int]):
         # Check if we already have cached data from the Zotero API.
         if not options.get('--ignore-cache', False):
             try:
@@ -160,11 +159,15 @@ class Command(BaseCommand):
             # Map all the entries first and later keep only those that have a
             # Dublin Core label, and for those we use that label for the key
             # value instead of the original XML tag's name.
-            complete = { re.match('^{.*}(.*)$', e.tag)[1]: e.text for e in rdf }
-            return { _dublin_core_labels[key]: val 
+            complete = {}
+            for e in rdf:
+                key = re.match('^{.*}(.*)$', e.tag)[1]
+                val = complete.setdefault(key, [])
+                val.append(e.text)
+            return { _dublin_core_labels[key]: val
                     for key, val in complete.items() if key in _dublin_core_labels }
 
-        def zotero_page(start, limit=100):
+        def zotero_page(start: int, group_id: str, limit=100):
             res = requests.get( \
                 f"{options['zotero_url']}/groups/{group_id}/items?" + \
                 f"start={start}&limit={limit}&content=rdf_dc", \
@@ -190,47 +193,50 @@ class Command(BaseCommand):
             return (page, count)
 
         zotero_data = {}
-        zotero_start = 0
-        error_count = 0
-        last_error = None
-        while True:
-            if error_count >= _max_errors:
-                raise Exception(f"Too many failures fetching data from the Zotero API: {last_error}")
-            try:
-                (page, count) = zotero_page(zotero_start, 100)
-                print(f"Fetched {count} records from Zotero's API/{len(page)} items with proper data.")
-                if count == 0:
-                    break
-                zotero_start += count
-                zotero_data.update(page)
-                error_count = 0
-            except Exception as ex:
-                last_error = ex
-                error_count += 1
-        # Now get bib info from Zotero.
-        error_count = 0
-        zotero_start = 0
-        while True:
-            if error_count >= _max_errors:
-                raise Exception(f"Too many failures fetching data from the Zotero API: {last_error}")
-            try:
-                res = requests.get( \
-                    f"{options['zotero_url']}/groups/{group_id}/items?start={zotero_start}" + \
-                    "&limit=100&&format=json&include=bib&style=chicago-fullnote-bibliography", \
-                    headers={ 'Authorization': f"Bearer {options['zotero_key']}" }, \
-                    timeout=60)
-                page = res.json()
-                if not page:
-                    break
-                print(f"Fetched bibliography from Zotero's API [{len(page)}].")
-                for item in page:
-                    key = item['key']
-                    if key in zotero_data:
-                        zotero_data[key]['bib'] = item['bib']
-                zotero_start += len(page)
-            except Exception as ex:
-                last_error = ex
-                error_count += 1
+        for group_id in group_ids:
+            zotero_start = 0
+            error_count = 0
+            last_error = None
+            while True:
+                if error_count >= _max_errors:
+                    raise Exception(f"Too many failures fetching data from the Zotero API: {last_error}")
+                try:
+                    (page, count) = zotero_page(zotero_start, group_id, 100)
+                    print(f"Fetched {count} records from Zotero's API/{len(page)} items with proper data.")
+                    if count == 0:
+                        break
+                    zotero_start += count
+                    zotero_data.update(page)
+                    error_count = 0
+                except Exception as ex:
+                    last_error = ex
+                    error_count += 1
+            # Now get bib info from Zotero.
+            error_count = 0
+            zotero_start = 0
+            while True:
+                if error_count >= _max_errors:
+                    raise Exception(f"Too many failures fetching data from the Zotero API: {last_error}")
+                try:
+                    res = requests.get( \
+                        f"{options['zotero_url']}/groups/{group_id}/items?start={zotero_start}" + \
+                        "&limit=100&format=json&include=bib&style=chicago-fullnote-bibliography", \
+                        headers={ 'Authorization': f"Bearer {options['zotero_key']}" }, \
+                        timeout=60)
+                    page = res.json()
+                    if not page:
+                        break
+                    print(f"Fetched bibliography from Zotero's API [{len(page)}].")
+                    for item in page:
+                        key = item['key']
+                        if key in zotero_data:
+                            zd = zotero_data[key]
+                            zd['bib'] = item['bib']
+                            zd['zotero_doc_url'] = item['links']['alternate']['href']
+                    zotero_start += len(page)
+                except Exception as ex:
+                    last_error = ex
+                    error_count += 1
         # Save to a local cache
         try:
             with open(_zotero_cache_filename, 'w', encoding='utf-8') as f:
@@ -306,11 +312,10 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         zotero_groups_url = f"{options['zotero_url']}/users/{options['zotero_userid']}/groups"
         res = requests.get(zotero_groups_url, timeout=30)
-        # Retrieve the group id from the Zotero API.
-        match = next(item for item in res.json() if item['data']['name'] == options['zotero_groupname'])
-        group_id = match['id']
-        print(f"Zotero group id is {group_id}")
-        zotero_data = Command._get_zotero_data(options, group_id)
+        # Retrieve the group ids from the Zotero API.
+        group_ids = [item['id'] for item in res.json() if item['data']['name']]
+        print(f"Zotero group ids are: {group_ids}")
+        zotero_data = Command._get_zotero_data(options, group_ids)
         voyages_data = Command._get_voyages_data(options)
         docs = {d.key: d for d in Document.objects.prefetch_related('revisions').all()}
         entity_types = {t.name: t for t in EntityType.objects.all()}
@@ -344,8 +349,10 @@ class Command(BaseCommand):
                     timestamp=timestamp)
                 rev.revision_number = 1
                 # Generate metadata for the document.
-                metadata = [_makeLabelValue(key, [val], 'en') for key, val in rdf.items()]
-                metadata.append(_makeLabelValue('Citation', [f"<span><a href='https://api.zotero.org/groups/{group_id}/items/{key}'>Zotero Entry</a></span>"], 'en'))
+                zotero_doc_url = rdf.pop('zotero_doc_url', None)
+                metadata = [_makeLabelValue(k, val, 'en') for k, val in rdf.items()]
+                if zotero_doc_url:
+                    metadata.append(_makeLabelValue('Citation', [f"<span><a href='{zotero_doc_url}'>Zotero Entry</a></span>"], 'en'))
                 rev.content = {
                     'metadata': metadata,
                     'page_images': page_images
@@ -355,6 +362,7 @@ class Command(BaseCommand):
                 Command._map_connections(doc, entity_types['Voyages'], voyage_data.get('source_voyage_connections'), 'voyage')
                 Command._map_connections(doc, entity_types['Enslaved'], voyage_data.get('source_enslaved_connections'), 'enslaved')
                 Command._map_connections(doc, entity_types['Enslavers'], voyage_data.get('source_enslaver_connections'), 'enslaver')
+                Command._map_connections(doc, entity_types['Voyage sources'], [{ 'src': voyage_data }], 'src')
                 # Import transcript data.
                 for i, page in enumerate(pages, 1):
                     page_transc = page.get('transcription')
